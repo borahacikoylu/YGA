@@ -156,6 +156,64 @@ def user_profile(request):
 
 
 @csrf_exempt
+def change_bakiye(request):
+    if request.method == "POST":
+        user_id = request.session.get("user_id")
+        if not user_id:
+            return JsonResponse(
+                {"error": "Oturum bulunamadı. Giriş yapmalısınız."}, status=401
+            )
+
+        try:
+            data = json.loads(request.body)
+            amount = data.get("amount")  # + veya - değer
+
+            if amount is None:
+                return JsonResponse({"error": "amount parametresi gerekli"}, status=400)
+
+            conn = get_connection()
+            cursor = conn.cursor(dictionary=True)
+
+            # Mevcut bakiyeyi kontrol et
+            cursor.execute("SELECT bakiye FROM users WHERE id = %s", (user_id,))
+            user = cursor.fetchone()
+            
+            if not user:
+                return JsonResponse({"error": "Kullanıcı bulunamadı"}, status=404)
+
+            new_balance = user["bakiye"] + amount
+
+            # Bakiye negatif olamaz
+            if new_balance < 0:
+                return JsonResponse(
+                    {"error": "Yetersiz bakiye"}, status=400
+                )
+
+            # Bakiyeyi güncelle
+            cursor.execute(
+                "UPDATE users SET bakiye = %s WHERE id = %s",
+                (new_balance, user_id)
+            )
+            conn.commit()
+
+            return JsonResponse({
+                "message": "Bakiye güncellendi",
+                "yeni_bakiye": new_balance
+            }, status=200)
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        return JsonResponse({"error": "Sadece POST destekleniyor"}, status=405)
+
+
+@csrf_exempt
 def buy_ticket(request):
     if request.method == "POST":
         user_id = request.session.get("user_id")
@@ -172,9 +230,9 @@ def buy_ticket(request):
                 return JsonResponse({"error": "concert_id gönderilmedi"}, status=400)
 
             conn = get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
 
-            # 1. Konser var mı kontrol et
+            # 1. Konser var mı ve fiyatını al
             cursor.execute(
                 "SELECT * FROM concerts WHERE concert_id = %s", (concert_id,)
             )
@@ -184,7 +242,28 @@ def buy_ticket(request):
                     {"error": "Geçerli bir konser bulunamadı"}, status=404
                 )
 
-            # 2. Bilet ekle
+            # 2. Bakiye kontrolü ve güncelleme
+            cursor.execute("SELECT bakiye FROM users WHERE id = %s", (user_id,))
+            user = cursor.fetchone()
+            
+            if not user:
+                return JsonResponse({"error": "Kullanıcı bulunamadı"}, status=404)
+
+            ticket_price = concert["fiyat"]
+            new_balance = user["bakiye"] - ticket_price
+
+            if new_balance < 0:
+                return JsonResponse(
+                    {"error": "Yetersiz bakiye"}, status=400
+                )
+
+            # 3. Bakiyeyi güncelle
+            cursor.execute(
+                "UPDATE users SET bakiye = %s WHERE id = %s",
+                (new_balance, user_id)
+            )
+
+            # 4. Bilet ekle
             cursor.execute(
                 """
                 INSERT INTO tickets (buyer, concert)
@@ -194,7 +273,10 @@ def buy_ticket(request):
             )
 
             conn.commit()
-            return JsonResponse({"message": "Bilet başarıyla alındı"}, status=201)
+            return JsonResponse({
+                "message": "Bilet başarıyla alındı",
+                "yeni_bakiye": new_balance
+            }, status=201)
 
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)

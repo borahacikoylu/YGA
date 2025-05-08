@@ -8,4 +8,5 @@ urlpatterns = [
     path("buy-ticket/", views.buy_ticket, name="buy_ticket"),
     path("logout/", views.logout_user, name="logout"),  # Yeni eklenen
     path("get-concert/", views.get_concerts, name="get_concerts"),  # Yeni eklenen
+    path("change-bakiye/", views.change_bakiye, name="change_bakiye"),  # Yeni eklenen
 ]
