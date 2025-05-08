@@ -3,6 +3,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import json
 from .db import get_connection  # varsa oradan al
+import uuid
 
 # Create your views here.
 
@@ -71,6 +72,8 @@ def login_user(request):
 
             conn = get_connection()
             cursor = conn.cursor(dictionary=True)
+            
+            # MySQL'den kullanıcı bilgilerini kontrol et
             cursor.execute(
                 "SELECT * FROM users WHERE mail = %s AND password = %s",
                 (mail, password),
@@ -78,14 +81,15 @@ def login_user(request):
             user = cursor.fetchone()
 
             if user:
-                # 🔐 Session’a user_id kaydet
+                # Django session'a user_id'yi kaydet
                 request.session["user_id"] = user["id"]
+                
                 return JsonResponse(
                     {
                         "message": "Giriş başarılı",
                         "isim": user["isim"],
                         "soyisim": user["soyisim"],
-                        "bakiye": user["bakiye"],
+                        "bakiye": user["bakiye"]
                     },
                     status=200,
                 )
