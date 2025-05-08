@@ -221,3 +221,48 @@ def logout_user(request):
             return JsonResponse({"error": str(e)}, status=500)
     else:
         return JsonResponse({"error": "Sadece POST destekleniyor"}, status=405)
+
+
+def get_concerts(request):
+    try:
+        # URL'den sehir_id parametresini al
+        sehir_id = request.GET.get('sehir_id')
+        
+        if not sehir_id:
+            return JsonResponse({"error": "sehir_id parametresi gerekli"}, status=400)
+            
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # Konserleri sehir_id'ye göre çek
+        cursor.execute("""
+            SELECT concert_id, konser_adi, tarih, saat, fiyat, mekan, adres, image
+            FROM concerts 
+            WHERE sehir_id = %s
+            ORDER BY tarih ASC
+        """, (sehir_id,))
+        
+        konserler = cursor.fetchall()
+        
+        # Tarih ve saat formatını düzenle
+        for konser in konserler:
+            if konser['tarih']:
+                # MySQL'den gelen tarihi string'e çevir
+                konser['tarih'] = konser['tarih'].isoformat() if hasattr(konser['tarih'], 'isoformat') else str(konser['tarih'])
+            if konser['saat']:
+                # MySQL'den gelen saati string'e çevir
+                konser['saat'] = konser['saat'].isoformat() if hasattr(konser['saat'], 'isoformat') else str(konser['saat'])
+        
+        return JsonResponse({
+            "message": "Konserler başarıyla getirildi",
+            "konserler": konserler
+        }, status=200)
+        
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+        
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
