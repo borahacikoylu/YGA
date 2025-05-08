@@ -208,3 +208,16 @@ def buy_ticket(request):
         return JsonResponse(
             {"error": "Sadece POST isteklerine izin verilir"}, status=405
         )
+
+
+@csrf_exempt
+def logout_user(request):
+    if request.method == "POST":
+        try:
+            # Session'ı temizle
+            request.session.flush()
+            return JsonResponse({"message": "Başarıyla çıkış yapıldı"}, status=200)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    else:
+        return JsonResponse({"error": "Sadece POST destekleniyor"}, status=405)
