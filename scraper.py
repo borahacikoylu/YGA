@@ -2,8 +2,16 @@ import requests
 import re
 import json
 from datetime import datetime
-from db import insert_concert
+import os
+import django
+from bs4 import BeautifulSoup
+import time
 
+# Django ayarlarını yükle
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'biletci.settings')
+django.setup()
+
+from app.models import Concert
 
 def get_location(mekan_id: int):
     url = "https://apiv2.bubilet.com.tr/api/Mekan/GetPaging"
@@ -28,7 +36,6 @@ def get_location(mekan_id: int):
         }
     else:
         return {}
-
 
 def get_events(il: int):
     url = "https://apiv2.bubilet.com.tr/api/Anasayfa/6/Etkinlikler"
@@ -70,20 +77,83 @@ def get_events(il: int):
             dosyalar = etkinlik.get("dosyalar", [])
             resim_url = next((d["url"] for d in dosyalar if "url" in d), None)
 
-            insert_concert(
-                konser_adi=etkinlikAdi,
-                sehir_id=mekan_bilgi.get("sehirId"),
-                adres=mekan_bilgi.get("adres"),
-                tarih=tarih_str,
-                saat=saat_str,
-                fiyat=fiyat,
-                mekan=mekan_bilgi.get("baslik"),
-                image=resim_url,
-            )
+            # Django ORM ile konser ekleme
+            try:
+                if not Concert.objects.filter(
+                    konser_adi=etkinlikAdi,
+                    tarih=tarih_str,
+                    mekan=mekan_bilgi.get("baslik")
+                ).exists():
+                    Concert.objects.create(
+                        konser_adi=etkinlikAdi,
+                        sehir_id=mekan_bilgi.get("sehirId"),
+                        adres=mekan_bilgi.get("adres"),
+                        tarih=tarih_str,
+                        saat=saat_str,
+                        fiyat=fiyat,
+                        mekan=mekan_bilgi.get("baslik"),
+                        image=resim_url,
+                    )
+                    print(f"Yeni konser eklendi: {etkinlikAdi}")
+                else:
+                    print(f"Konser zaten mevcut: {etkinlikAdi}")
+            except Exception as e:
+                print(f"Konser ekleme hatası: {e}")
 
     else:
         print("Etkinlik verisi alınamadı. Status:", response.status_code)
 
+def scrape_concerts():
+    # Konserleri çek
+    url = "https://www.biletix.com/anasayfa/TURKIYE/tr"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Konser kartlarını bul
+    concert_cards = soup.find_all('div', class_='event-card')
+    
+    for card in concert_cards:
+        try:
+            # Konser bilgilerini çek
+            konser_adi = card.find('h3').text.strip()
+            mekan = card.find('div', class_='venue').text.strip()
+            tarih = card.find('div', class_='date').text.strip()
+            fiyat = card.find('div', class_='price').text.strip()
+            image = card.find('img')['src']
+            
+            # Fiyatı sayıya çevir
+            fiyat = float(fiyat.replace('TL', '').strip())
+            
+            # Tarihi datetime objesine çevir
+            tarih = datetime.strptime(tarih, '%d.%m.%Y')
+            
+            # Konser zaten var mı kontrol et
+            if not Concert.objects.filter(
+                konser_adi=konser_adi,
+                tarih=tarih,
+                mekan=mekan
+            ).exists():
+                # Yeni konser oluştur
+                Concert.objects.create(
+                    konser_adi=konser_adi,
+                    tarih=tarih,
+                    mekan=mekan,
+                    fiyat=fiyat,
+                    image=image,
+                    sehir_id=1  # Varsayılan olarak İstanbul
+                )
+                print(f"Yeni konser eklendi: {konser_adi}")
+            else:
+                print(f"Konser zaten mevcut: {konser_adi}")
+                
+        except Exception as e:
+            print(f"Hata oluştu: {str(e)}")
+            continue
+        
+        # Her istek arasında 1 saniye bekle
+        time.sleep(1)
 
 if __name__ == "__main__":
-    get_events(55)
+    print("Konserler çekiliyor...")
+    scrape_concerts()
+    print("İşlem tamamlandı!")

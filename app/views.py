@@ -1,350 +1,243 @@
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from django.core.exceptions import ObjectDoesNotExist
+from functools import wraps
 import json
-from .db import get_connection  # varsa oradan al
 import uuid
+from .models import User, Concert, Ticket
+from datetime import datetime
+
+def login_required(view_func):
+    @wraps(view_func)
+    def _wrapped_view(request, *args, **kwargs):
+        if not request.session.get('user_id'):
+            return JsonResponse({
+                "detail": "Oturum bulunamadı. Lütfen giriş yapın.",
+                "status": "error"
+            }, status=401)
+        return view_func(request, *args, **kwargs)
+    return _wrapped_view
 
 # Create your views here.
 
 
 @csrf_exempt
+@require_http_methods(["POST"])
 def register_user(request):
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
-
-            isim = data.get("isim")
-            soyisim = data.get("soyisim")
-            mail = data.get("mail")
-            yas = data.get("yas")
-            password = data.get("password")
-
-            if not all([isim, soyisim, mail, yas, password]):
-                return JsonResponse({"error": "Eksik veri var."}, status=400)
-
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-
-            # Kullanıcı daha önce kayıt olmuş mu?
-            cursor.execute("SELECT * FROM users WHERE mail = %s", (mail,))
-            if cursor.fetchone():
-                return JsonResponse(
-                    {"error": "Bu mail ile zaten kayıtlı kullanıcı var."}, status=409
-                )
-
-            # Yeni kullanıcı ekle
-            cursor.execute(
-                """
-                INSERT INTO users (isim, soyisim, mail, yas, password, bakiye)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-                (isim, soyisim, mail, yas, password, 1000),
-            )  # örnek bakiye 1000 TL
-
-            conn.commit()
-            return JsonResponse({"message": "Kayıt başarılı"}, status=201)
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    else:
-        return JsonResponse({"error": "Sadece POST destekleniyor"}, status=405)
-
-
-@csrf_exempt
-def login_user(request):
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
-            mail = data.get("mail")
-            password = data.get("password")
-
-            if not all([mail, password]):
-                return JsonResponse(
-                    {"error": "Lütfen boşlukları doldurunuz!"}, status=400
-                )
-
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-            
-            # MySQL'den kullanıcı bilgilerini kontrol et
-            cursor.execute(
-                "SELECT * FROM users WHERE mail = %s AND password = %s",
-                (mail, password),
-            )
-            user = cursor.fetchone()
-
-            if user:
-                # Django session'a user_id'yi kaydet
-                request.session["user_id"] = user["id"]
-                
-                return JsonResponse(
-                    {
-                        "message": "Giriş başarılı",
-                        "isim": user["isim"],
-                        "soyisim": user["soyisim"],
-                        "bakiye": user["bakiye"]
-                    },
-                    status=200,
-                )
-            else:
-                return JsonResponse({"error": "Geçersiz mail veya şifre."}, status=401)
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    else:
-        return JsonResponse({"error": "Sadece POST destekleniyor."}, status=405)
-
-
-def user_profile(request):
-    user_id = request.session.get("user_id")
-
-    if not user_id:
-        return JsonResponse({"error": "Oturum bulunamadı"}, status=401)
-
     try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        # 1. Kullanıcı bilgisi
-        cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-        user = cursor.fetchone()
-        if not user:
-            return JsonResponse({"error": "Kullanıcı bulunamadı"}, status=404)
-
-        # 2. Bilet bilgileri (tickets + concerts JOIN)
-        cursor.execute(
-            """
-            SELECT c.konser_adi, c.tarih, c.saat, c.fiyat, c.mekan, c.adres
-            FROM tickets t
-            JOIN concerts c ON t.concert = c.concert_id
-            WHERE t.buyer = %s
-        """,
-            (user_id,),
+        data = json.loads(request.body)
+        # Kullanıcı kontrolü
+        if User.objects.filter(mail=data['mail']).exists():
+            return JsonResponse({"detail": "Bu mail ile zaten kayıtlı kullanıcı var."}, status=409)
+        
+        # Yeni kullanıcı oluştur
+        user = User.objects.create(
+            isim=data['isim'],
+            soyisim=data['soyisim'],
+            mail=data['mail'],
+            yas=data['yas'],
+            password=data['password'],
+            bakiye=1000
         )
-        biletler = cursor.fetchall()
-
-        return JsonResponse(
-            {
-                "isim": user["isim"],
-                "soyisim": user["soyisim"],
-                "mail": user["mail"],
-                "yas": user["yas"],
-                "bakiye": user["bakiye"],
-                "biletler": biletler,  # 👈 eklenen kısım
-            },
-            status=200,
-        )
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        return JsonResponse({"message": "Kayıt başarılı"})
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
 
 
 @csrf_exempt
-def change_bakiye(request):
-    if request.method == "POST":
-        user_id = request.session.get("user_id")
-        if not user_id:
-            return JsonResponse(
-                {"error": "Oturum bulunamadı. Giriş yapmalısınız."}, status=401
-            )
+@require_http_methods(["POST"])
+def login_user(request):
+    try:
+        data = json.loads(request.body)
+        user = User.objects.get(mail=data['mail'], password=data['password'])
+        
+        # Session'a user_id'yi kaydet
+        request.session['user_id'] = user.id
+        
+        return JsonResponse({
+            "message": "Giriş başarılı",
+            "isim": user.isim,
+            "soyisim": user.soyisim,
+            "bakiye": user.bakiye,
+            "user_id": user.id
+        })
+    except ObjectDoesNotExist:
+        return JsonResponse({"detail": "Geçersiz mail veya şifre."}, status=401)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
 
-        try:
-            data = json.loads(request.body)
-            amount = data.get("amount")  # + veya - değer
 
-            if amount is None:
-                return JsonResponse({"error": "amount parametresi gerekli"}, status=400)
-
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-
-            # Mevcut bakiyeyi kontrol et
-            cursor.execute("SELECT bakiye FROM users WHERE id = %s", (user_id,))
-            user = cursor.fetchone()
-            
-            if not user:
-                return JsonResponse({"error": "Kullanıcı bulunamadı"}, status=404)
-
-            new_balance = user["bakiye"] + amount
-
-            # Bakiye negatif olamaz
-            if new_balance < 0:
-                return JsonResponse(
-                    {"error": "Yetersiz bakiye"}, status=400
-                )
-
-            # Bakiyeyi güncelle
-            cursor.execute(
-                "UPDATE users SET bakiye = %s WHERE id = %s",
-                (new_balance, user_id)
-            )
-            conn.commit()
-
+@require_http_methods(["GET"])
+@login_required
+def user_profile(request, user_id):
+    try:
+        # Session'daki user_id ile istenen user_id'yi karşılaştır
+        if request.session.get('user_id') != user_id:
             return JsonResponse({
-                "message": "Bakiye güncellendi",
-                "yeni_bakiye": new_balance
-            }, status=200)
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    else:
-        return JsonResponse({"error": "Sadece POST destekleniyor"}, status=405)
-
-
-@csrf_exempt
-def buy_ticket(request):
-    if request.method == "POST":
-        user_id = request.session.get("user_id")
-        if not user_id:
-            return JsonResponse(
-                {"error": "Oturum bulunamadı. Giriş yapmalısınız."}, status=401
-            )
-
-        try:
-            data = json.loads(request.body)
-            concert_id = data.get("concert_id")
-
-            if not concert_id:
-                return JsonResponse({"error": "concert_id gönderilmedi"}, status=400)
-
-            conn = get_connection()
-            cursor = conn.cursor(dictionary=True)
-
-            # 1. Konser var mı ve fiyatını al
-            cursor.execute(
-                "SELECT * FROM concerts WHERE concert_id = %s", (concert_id,)
-            )
-            concert = cursor.fetchone()
-            if not concert:
-                return JsonResponse(
-                    {"error": "Geçerli bir konser bulunamadı"}, status=404
-                )
-
-            # 2. Bakiye kontrolü ve güncelleme
-            cursor.execute("SELECT bakiye FROM users WHERE id = %s", (user_id,))
-            user = cursor.fetchone()
+                "detail": "Bu profili görüntüleme yetkiniz yok.",
+                "status": "error"
+            }, status=403)
             
-            if not user:
-                return JsonResponse({"error": "Kullanıcı bulunamadı"}, status=404)
-
-            ticket_price = concert["fiyat"]
-            new_balance = user["bakiye"] - ticket_price
-
-            if new_balance < 0:
-                return JsonResponse(
-                    {"error": "Yetersiz bakiye"}, status=400
-                )
-
-            # 3. Bakiyeyi güncelle
-            cursor.execute(
-                "UPDATE users SET bakiye = %s WHERE id = %s",
-                (new_balance, user_id)
-            )
-
-            # 4. Bilet ekle
-            cursor.execute(
-                """
-                INSERT INTO tickets (buyer, concert)
-                VALUES (%s, %s)
-            """,
-                (user_id, concert_id),
-            )
-
-            conn.commit()
-            return JsonResponse({
-                "message": "Bilet başarıyla alındı",
-                "yeni_bakiye": new_balance
-            }, status=201)
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    else:
-        return JsonResponse(
-            {"error": "Sadece POST isteklerine izin verilir"}, status=405
-        )
+        user = User.objects.get(id=user_id)
+        biletler = Ticket.objects.filter(buyer=user).select_related('concert')
+        
+        bilet_listesi = []
+        for bilet in biletler:
+            bilet_listesi.append({
+                "konser_adi": bilet.concert.konser_adi,
+                "tarih": bilet.concert.tarih,
+                "saat": bilet.concert.saat,
+                "fiyat": bilet.concert.fiyat,
+                "mekan": bilet.concert.mekan,
+                "adres": bilet.concert.adres
+            })
+        
+        return JsonResponse({
+            "isim": user.isim,
+            "soyisim": user.soyisim,
+            "mail": user.mail,
+            "yas": user.yas,
+            "bakiye": user.bakiye,
+            "biletler": bilet_listesi
+        })
+    except ObjectDoesNotExist:
+        return JsonResponse({"detail": "Kullanıcı bulunamadı"}, status=404)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
 
 
 @csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def change_bakiye(request, user_id):
+    try:
+        # Session'daki user_id ile istenen user_id'yi karşılaştır
+        if request.session.get('user_id') != user_id:
+            return JsonResponse({
+                "detail": "Bu işlemi yapma yetkiniz yok.",
+                "status": "error"
+            }, status=403)
+            
+        data = json.loads(request.body)
+        amount = data.get("amount")
+
+        if amount is None:
+            return JsonResponse({"detail": "amount parametresi gerekli"}, status=400)
+
+        user = User.objects.get(id=user_id)
+        new_balance = user.bakiye + amount
+
+        if new_balance < 0:
+            return JsonResponse({"detail": "Yetersiz bakiye"}, status=400)
+
+        user.bakiye = new_balance
+        user.save()
+
+        return JsonResponse({
+            "message": "Bakiye güncellendi",
+            "yeni_bakiye": new_balance
+        })
+
+    except ObjectDoesNotExist:
+        return JsonResponse({"detail": "Kullanıcı bulunamadı"}, status=404)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def buy_ticket(request, user_id):
+    try:
+        # Session'daki user_id ile istenen user_id'yi karşılaştır
+        if request.session.get('user_id') != user_id:
+            return JsonResponse({
+                "detail": "Bu işlemi yapma yetkiniz yok.",
+                "status": "error"
+            }, status=403)
+            
+        data = json.loads(request.body)
+        concert_id = data['concert_id']
+        
+        # Konser ve kullanıcı bilgilerini al
+        concert = Concert.objects.get(concert_id=concert_id)
+        user = User.objects.get(id=user_id)
+        
+        # Bakiye kontrolü
+        if user.bakiye < concert.fiyat:
+            return JsonResponse({
+                "detail": "Yetersiz bakiye",
+                "mevcut_bakiye": user.bakiye,
+                "gerekli_bakiye": concert.fiyat
+            }, status=400)
+        
+        # Bakiyeyi güncelle
+        user.bakiye -= concert.fiyat
+        user.save()
+        
+        # Bilet oluştur
+        Ticket.objects.create(buyer=user, concert=concert)
+        
+        return JsonResponse({
+            "message": "Bilet başarıyla alındı",
+            "kalan_bakiye": user.bakiye,
+            "odenen_tutar": concert.fiyat
+        })
+    except ObjectDoesNotExist:
+        return JsonResponse({"detail": "Geçerli bir konser veya kullanıcı bulunamadı"}, status=404)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
 def logout_user(request):
-    if request.method == "POST":
-        try:
-            # Session'ı temizle
-            request.session.flush()
-            return JsonResponse({"message": "Başarıyla çıkış yapıldı"}, status=200)
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-    else:
-        return JsonResponse({"error": "Sadece POST destekleniyor"}, status=405)
+    try:
+        # Session'ı temizle
+        request.session.flush()
+        return JsonResponse({
+            "message": "Başarıyla çıkış yapıldı",
+            "status": "success"
+        })
+    except Exception as e:
+        return JsonResponse({
+            "detail": str(e),
+            "status": "error"
+        }, status=500)
 
 
+@require_http_methods(["GET"])
 def get_concerts(request):
     try:
         # URL'den sehir_id parametresini al
         sehir_id = request.GET.get('sehir_id')
         
         if not sehir_id:
-            return JsonResponse({"error": "sehir_id parametresi gerekli"}, status=400)
+            return JsonResponse({"detail": "sehir_id parametresi gerekli"}, status=400)
             
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        
         # Konserleri sehir_id'ye göre çek
-        cursor.execute("""
-            SELECT concert_id, konser_adi, tarih, saat, fiyat, mekan, adres, image
-            FROM concerts 
-            WHERE sehir_id = %s
-            ORDER BY tarih ASC
-        """, (sehir_id,))
+        konserler = Concert.objects.filter(sehir_id=sehir_id).order_by('tarih')
         
-        konserler = cursor.fetchall()
-        
-        # Tarih ve saat formatını düzenle
+        # Konserleri JSON formatına dönüştür
+        konser_listesi = []
         for konser in konserler:
-            if konser['tarih']:
-                # MySQL'den gelen tarihi string'e çevir
-                konser['tarih'] = konser['tarih'].isoformat() if hasattr(konser['tarih'], 'isoformat') else str(konser['tarih'])
-            if konser['saat']:
-                # MySQL'den gelen saati string'e çevir
-                konser['saat'] = konser['saat'].isoformat() if hasattr(konser['saat'], 'isoformat') else str(konser['saat'])
+            konser_listesi.append({
+                "concert_id": konser.concert_id,
+                "konser_adi": konser.konser_adi,
+                "tarih": konser.tarih.isoformat() if konser.tarih else None,
+                "saat": konser.saat.isoformat() if konser.saat else None,
+                "fiyat": konser.fiyat,
+                "mekan": konser.mekan,
+                "adres": konser.adres,
+                "image": konser.image
+            })
         
         return JsonResponse({
             "message": "Konserler başarıyla getirildi",
-            "konserler": konserler
-        }, status=200)
+            "konserler": konser_listesi
+        })
         
     except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-        
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        return JsonResponse({"detail": str(e)}, status=500)
