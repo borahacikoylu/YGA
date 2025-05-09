@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
     python3-dev \
+    default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Python bağımlılıklarını kopyala ve yükle
