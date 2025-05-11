@@ -8,10 +8,11 @@ from bs4 import BeautifulSoup
 import time
 
 # Django ayarlarını yükle
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'biletci.settings')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "biletci.settings")
 django.setup()
 
 from app.models import Concert
+
 
 def get_location(mekan_id: int):
     url = "https://apiv2.bubilet.com.tr/api/Mekan/GetPaging"
@@ -36,6 +37,7 @@ def get_location(mekan_id: int):
         }
     else:
         return {}
+
 
 def get_events(il: int):
     url = "https://apiv2.bubilet.com.tr/api/Anasayfa/6/Etkinlikler"
@@ -77,12 +79,11 @@ def get_events(il: int):
             dosyalar = etkinlik.get("dosyalar", [])
             resim_url = next((d["url"] for d in dosyalar if "url" in d), None)
 
-            # Django ORM ile konser ekleme
             try:
                 if not Concert.objects.filter(
                     konser_adi=etkinlikAdi,
                     tarih=tarih_str,
-                    mekan=mekan_bilgi.get("baslik")
+                    mekan=mekan_bilgi.get("baslik"),
                 ).exists():
                     Concert.objects.create(
                         konser_adi=etkinlikAdi,
@@ -90,7 +91,7 @@ def get_events(il: int):
                         adres=mekan_bilgi.get("adres"),
                         tarih=tarih_str,
                         saat=saat_str,
-                        fiyat=fiyat,
+                        fiyat=fiyat if fiyat else 0,
                         mekan=mekan_bilgi.get("baslik"),
                         image=resim_url,
                     )
@@ -103,57 +104,61 @@ def get_events(il: int):
     else:
         print("Etkinlik verisi alınamadı. Status:", response.status_code)
 
+
 def scrape_concerts():
     # Konserleri çek
     url = "https://www.biletix.com/anasayfa/TURKIYE/tr"
     response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
+    soup = BeautifulSoup(response.text, "html.parser")
+
     # Konser kartlarını bul
-    concert_cards = soup.find_all('div', class_='event-card')
-    
+    concert_cards = soup.find_all("div", class_="event-card")
+
     for card in concert_cards:
         try:
             # Konser bilgilerini çek
-            konser_adi = card.find('h3').text.strip()
-            mekan = card.find('div', class_='venue').text.strip()
-            tarih = card.find('div', class_='date').text.strip()
-            fiyat = card.find('div', class_='price').text.strip()
-            image = card.find('img')['src']
-            
-            # Fiyatı sayıya çevir
-            fiyat = float(fiyat.replace('TL', '').strip())
-            
+            konser_adi = card.find("h3").text.strip()
+            mekan = card.find("div", class_="venue").text.strip()
+            tarih = card.find("div", class_="date").text.strip()
+            fiyat = card.find("div", class_="price").text.strip()
+            image = card.find("img")["src"]
+
+            # Fiyatı temizle ve int'e dönüştür
+            fiyat = int(float(fiyat.replace("TL", "").strip()))
+
             # Tarihi datetime objesine çevir
-            tarih = datetime.strptime(tarih, '%d.%m.%Y')
-            
+            tarih_obj = datetime.strptime(tarih, "%d.%m.%Y")
+
             # Konser zaten var mı kontrol et
             if not Concert.objects.filter(
-                konser_adi=konser_adi,
-                tarih=tarih,
-                mekan=mekan
+                konser_adi=konser_adi, tarih=tarih_obj.date(), mekan=mekan
             ).exists():
                 # Yeni konser oluştur
                 Concert.objects.create(
                     konser_adi=konser_adi,
-                    tarih=tarih,
+                    tarih=tarih_obj.date(),
+                    saat=datetime.strptime("20:00", "%H:%M").time(),  # varsayılan saat
                     mekan=mekan,
                     fiyat=fiyat,
                     image=image,
-                    sehir_id=1  # Varsayılan olarak İstanbul
+                    sehir_id=1,  # Varsayılan olarak İstanbul (1) atandı
+                    adres="",  # adres bilgisi mevcut değilse boş
                 )
                 print(f"Yeni konser eklendi: {konser_adi}")
             else:
                 print(f"Konser zaten mevcut: {konser_adi}")
-                
+
         except Exception as e:
             print(f"Hata oluştu: {str(e)}")
             continue
-        
-        # Her istek arasında 1 saniye bekle
+
         time.sleep(1)
 
+
 if __name__ == "__main__":
-    print("Konserler çekiliyor...")
+    print("Bubilet konserleri çekiliyor...")
+    get_events(34)  # İstanbul konserleri için il kodu örneği (34)
+
+    print("Biletix konserleri çekiliyor...")
     scrape_concerts()
     print("İşlem tamamlandı!")

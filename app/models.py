@@ -1,7 +1,5 @@
 from django.db import models
-from django.http import JsonResponse
 
-# Create your models here.
 
 class User(models.Model):
     isim = models.CharField(max_length=100)
@@ -13,6 +11,7 @@ class User(models.Model):
 
     def __str__(self):
         return f"{self.isim} {self.soyisim}"
+
 
 class Concert(models.Model):
     concert_id = models.AutoField(primary_key=True)
@@ -27,6 +26,7 @@ class Concert(models.Model):
 
     def __str__(self):
         return self.konser_adi
+
 
 class Ticket(models.Model):
     buyer = models.ForeignKey(User, on_delete=models.CASCADE)
