@@ -82,6 +82,7 @@ def user_profile(request):
                 "fiyat": bilet.concert.fiyat,
                 "mekan": bilet.concert.mekan,
                 "adres": bilet.concert.adres,
+                "image": bilet.concert.image,
             }
             for bilet in biletler
         ]
