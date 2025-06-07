@@ -157,8 +157,13 @@ def scrape_concerts():
 
 if __name__ == "__main__":
     print("Bubilet konserleri çekiliyor...")
-    get_events(34)  # İstanbul konserleri için il kodu örneği (34)
+
+    for city_code in range(1, 83):  # Türkiye'deki 81 il (1-82 arası dahil)
+        if city_code == 34:
+            continue  # 34 (İstanbul) atlanacak
+        get_events(city_code)
 
     print("Biletix konserleri çekiliyor...")
     scrape_concerts()
+
     print("İşlem tamamlandı!")
