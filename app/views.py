@@ -5,7 +5,7 @@ from django.views.decorators.http import require_http_methods
 from django.core.exceptions import ObjectDoesNotExist
 from functools import wraps
 import json
-from .models import User, Concert, Ticket
+from .models import User, Concert, Ticket, Comment
 
 
 def login_required(view_func):
@@ -181,18 +181,64 @@ def get_concerts(request):
         return JsonResponse({"detail": "sehir_id gerekli"}, status=400)
 
     concerts = Concert.objects.filter(sehir_id=sehir_id).order_by("tarih")
-    konserler = [
-        {
-            "concert_id": c.concert_id,
-            "konser_adi": c.konser_adi,
-            "tarih": c.tarih.isoformat(),
-            "saat": c.saat.isoformat(),
-            "fiyat": c.fiyat,
-            "mekan": c.mekan,
-            "adres": c.adres,
-            "image": c.image,
-        }
-        for c in concerts
-    ]
+
+    konserler = []
+    for c in concerts:
+        comments = c.comments.select_related("user").all()
+        yorumlar = [
+            {
+                "kullanici": f"{comment.user.isim} {comment.user.soyisim}",
+                "yorum": comment.content,
+                "tarih": comment.created_at.isoformat(),
+            }
+            for comment in comments
+        ]
+
+        konserler.append(
+            {
+                "concert_id": c.concert_id,
+                "konser_adi": c.konser_adi,
+                "tarih": c.tarih.isoformat(),
+                "saat": c.saat.isoformat(),
+                "fiyat": c.fiyat,
+                "mekan": c.mekan,
+                "adres": c.adres,
+                "image": c.image,
+                "yorumlar": yorumlar,
+            }
+        )
 
     return JsonResponse({"konserler": konserler})
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def add_comment(request):
+    try:
+        data = json.loads(request.body)
+
+        concert_id = data.get("concert_id")
+        content = data.get("content")
+
+        if not concert_id or not content:
+            return JsonResponse(
+                {"detail": "concert_id ve content zorunludur"}, status=400
+            )
+
+        try:
+            concert = Concert.objects.get(concert_id=concert_id)
+        except Concert.DoesNotExist:
+            return JsonResponse({"detail": "Konser bulunamadı"}, status=404)
+
+        user_id = request.session.get("user_id")
+        user = User.objects.get(id=user_id)
+
+        Comment.objects.create(user=user, concert=concert, content=content)
+
+        return JsonResponse({"detail": "Yorum başarıyla eklendi"}, status=201)
+
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Geçersiz JSON formatı"}, status=400)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
