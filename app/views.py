@@ -6,6 +6,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from functools import wraps
 import json
 from .models import User, Concert, Ticket, Comment
+from datetime import date, timedelta
 
 
 def login_required(view_func):
@@ -76,6 +77,7 @@ def user_profile(request):
 
         bilet_listesi = [
             {
+                "concert_id": bilet.concert.concert_id,
                 "konser_adi": bilet.concert.konser_adi,
                 "tarih": bilet.concert.tarih.isoformat(),
                 "saat": bilet.concert.saat.isoformat(),
@@ -237,6 +239,58 @@ def add_comment(request):
         Comment.objects.create(user=user, concert=concert, content=content)
 
         return JsonResponse({"detail": "Yorum başarıyla eklendi"}, status=201)
+
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Geçersiz JSON formatı"}, status=400)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def cancel_ticket(request):
+    try:
+        data = json.loads(request.body)
+        concert_id = data.get("concert_id")
+
+        if not concert_id:
+            return JsonResponse({"detail": "concert_id gerekli"}, status=400)
+
+        user = User.objects.get(id=request.session.get("user_id"))
+
+        try:
+            concert = Concert.objects.get(concert_id=concert_id)
+        except Concert.DoesNotExist:
+            return JsonResponse({"detail": "Konser bulunamadı"}, status=404)
+
+        try:
+            ticket = Ticket.objects.get(buyer=user, concert=concert)
+        except Ticket.DoesNotExist:
+            return JsonResponse({"detail": "Böyle bir bilet bulunamadı"}, status=404)
+
+        # 🔒 İptal için tarih kontrolü
+        today = date.today()
+        if concert.tarih <= today + timedelta(days=1):
+            return JsonResponse(
+                {"detail": "Konser tarihi yaklaştığı için bilet iptal edilemez"},
+                status=400,
+            )
+
+        # Bileti sil
+        ticket.delete()
+
+        # Bakiyeyi iade et
+        user.bakiye += concert.fiyat
+        user.save()
+
+        return JsonResponse(
+            {
+                "message": "Bilet başarıyla iptal edildi",
+                "iade_edilen_tutar": concert.fiyat,
+                "guncel_bakiye": user.bakiye,
+            }
+        )
 
     except json.JSONDecodeError:
         return JsonResponse({"detail": "Geçersiz JSON formatı"}, status=400)

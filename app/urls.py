@@ -10,4 +10,5 @@ urlpatterns = [
     path("get-concert/", views.get_concerts, name="get_concerts"),
     path("change-bakiye/", views.change_bakiye, name="change_bakiye"),
     path("add-comment/", views.add_comment, name="add_comment"),
+    path("cancel-ticket/", views.cancel_ticket, name="cancel_ticket"),
 ]
