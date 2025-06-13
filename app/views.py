@@ -296,3 +296,36 @@ def cancel_ticket(request):
         return JsonResponse({"detail": "Geçersiz JSON formatı"}, status=400)
     except Exception as e:
         return JsonResponse({"detail": str(e)}, status=500)
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def update_user_info(request):
+    try:
+        data = json.loads(request.body)
+        yeni_isim = data.get("isim")
+        yeni_soyisim = data.get("soyisim")
+
+        if not yeni_isim or not yeni_soyisim:
+            return JsonResponse(
+                {"detail": "isim ve soyisim alanları zorunludur"}, status=400
+            )
+
+        user = User.objects.get(id=request.session.get("user_id"))
+        user.isim = yeni_isim
+        user.soyisim = yeni_soyisim
+        user.save()
+
+        return JsonResponse(
+            {
+                "message": "Kullanıcı bilgileri güncellendi",
+                "isim": user.isim,
+                "soyisim": user.soyisim,
+            }
+        )
+
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Geçersiz JSON formatı"}, status=400)
+    except Exception as e:
+        return JsonResponse({"detail": str(e)}, status=500)

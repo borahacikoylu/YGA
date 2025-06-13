@@ -11,4 +11,5 @@ urlpatterns = [
     path("change-bakiye/", views.change_bakiye, name="change_bakiye"),
     path("add-comment/", views.add_comment, name="add_comment"),
     path("cancel-ticket/", views.cancel_ticket, name="cancel_ticket"),
+    path("update-user/", views.update_user_info, name="update_user_info"),
 ]
